@@ -5,12 +5,12 @@ import math
 import os
 import random
 import time
-from importlib import resources
 
 from beamngpy import BeamNGpy, MeshRoad, Scenario, Vehicle, angle_to_quat
 
-from beamng_demo import default_host
+from beamng_demo import default_host, world
 from beamng_demo.highlights import Spotter, play_reel
+from beamng_demo.world import Director, car_positions, park
 
 # Track: a rectangle with rounded corners on the flat smallgrid map, centred on
 # the origin. Driven clockwise (right turns only) unless --direction ccw.
@@ -182,76 +182,13 @@ def progress(pos) -> float:
 # ---------------------------------------------------------------- camera
 
 def install_camera(bng: BeamNGpy, vids: list[str]) -> None:
-    """Copy raceCam.lua into the game's user folder and load it.
-
-    Each API call waits about one game frame, so a camera driven from Python
-    stutters. The extension moves the camera every frame instead.
-    """
-    src = (resources.files(__package__) / "raceCam.lua").read_text()
-    assert "]==]" not in src
-    bng.control.queue_lua_command(
-        f"writeFile('/lua/ge/extensions/raceCam.lua', [==[{src}]==])\n"
-        "extensions.unload('raceCam')\n"
-        "extensions.load('raceCam')")
+    """Load the in-game camera with TV towers around this track."""
     a = TRACK_LENGTH / 2
     b = TRACK_DEPTH / 2
     # TV towers outside each corner, plus mid-straight on the long sides.
     towers = [(sx * (a + 25), sy * (b + 25), 14.0) for sx in (-1, 1) for sy in (-1, 1)]
     towers += [(0.0, -b - 35, 10.0), (0.0, b + 35, 10.0)]
-    lua_towers = ", ".join(f"{{{x}, {y}, {z}}}" for x, y, z in towers)
-    lua_vids = ", ".join(f"'{v}'" for v in vids)
-    bng.control.queue_lua_command(f"raceCam.setup({{{lua_vids}}}, {{{lua_towers}}})")
-
-
-class Director:
-    """Picks the next shot and target every few seconds; raceCam does the moving."""
-
-    SHOTS = ("tv", "chase", "blimp")
-
-    def __init__(self, bng: BeamNGpy, shot_seconds: float):
-        self.bng = bng
-        self.shot_seconds = shot_seconds
-        self.shot_i = -1
-        self.shot_started = -1e9
-        self.target = None
-
-    def tick(self, now: float, order: list[str]) -> None:
-        if now - self.shot_started < self.shot_seconds:
-            return
-        self.shot_i = (self.shot_i + 1) % len(self.SHOTS)
-        self.shot_started = now
-        # Mostly follow the leader, sometimes someone in the pack.
-        self.target = order[0] if random.random() < 0.5 else random.choice(order)
-        self.bng.control.queue_lua_command(
-            f"raceCam.setShot('{self.SHOTS[self.shot_i]}', '{self.target}')")
-
-    def describe(self) -> str:
-        return f"{self.SHOTS[self.shot_i]} on {self.target}"
-
-
-def park(car: Vehicle) -> None:
-    """AI off, parking brake on, engine off, so a wrecked car stops revving.
-
-    Ignition-off calls do not hold on a wrecked car (ignition stays at 2 and the
-    engine keeps revving), so switch off the engine device itself.
-    """
-    car.ai.set_mode("disabled")
-    car.queue_lua_command(
-        'input.event("throttle", 0, 1) input.event("parkingbrake", 1, 1) '
-        'local e = powertrain.getDevice("mainEngine") if e then e:disable() end')
-
-
-def car_positions(bng: BeamNGpy) -> tuple[dict[str, tuple[float, float, float]], float]:
-    """All car positions, plus the replay recording time, in one round trip."""
-    raw = bng.control.queue_lua_command("return raceCam.states()", response=True)
-    out, replay_t = {}, 0.0
-    for item in str(raw).split(";"):
-        parts = item.split()
-        if len(parts) == 4:
-            out[parts[0]] = tuple(float(c) for c in parts[1:])
-        elif len(parts) == 2 and parts[0] == "T":
-            replay_t = float(parts[1])
-    return out, replay_t
+    world.install_camera(bng, vids, towers)
 
 
 # ---------------------------------------------------------------- race
@@ -285,12 +222,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def place_scenery(bng: BeamNGpy) -> None:
-    """Grass slab over the grid floor, plus a concrete wall around the outside.
-
-    BeamNGpy's ProceduralCube fails on BeamNG.drive: techCore grabs the
-    proceduralPrimitives extension before it is loaded. So load it here and
-    build the boxes with the same steps techCore uses.
-    """
+    """Grass slab over the grid floor, a concrete outer wall, and the start line."""
     boxes = []  # name, size, material, pos, quat
     # Slab top sits 1 cm above the floor and 1 cm below the track surface.
     boxes.append(("grass", (TRACK_LENGTH + 400, TRACK_DEPTH + 400, SLAB_DEPTH), GRASS_MATERIAL,
@@ -315,10 +247,9 @@ def place_scenery(bng: BeamNGpy) -> None:
                       WALL_MATERIAL, (x, y, GROUND_Z + WALL_HEIGHT / 2),
                       angle_to_quat((0, 0, math.degrees(heading)))))
 
-    solid = len(boxes)
+    line = []
     # Checkered start/finish line, 1 cm thick on top of the 2 cm track surface.
-    # Visual only: it is created after the collision rebuild below, because even a
-    # 1 cm solid step stops the cars dead.
+    # Visual only, because even a 1 cm solid step stops the cars dead.
     cols = int(TRACK_WIDTH / LINE_SQUARE)
     for row in range(LINE_ROWS):
         s = (row - (LINE_ROWS - 1) / 2) * LINE_SQUARE
@@ -326,44 +257,14 @@ def place_scenery(bng: BeamNGpy) -> None:
             lateral = (col - (cols - 1) / 2) * LINE_SQUARE
             x, y, heading = track_point(s, lateral)
             mat = "race_white" if (row + col) % 2 == 0 else "race_black"
-            boxes.append((f"line_{row}_{col:02d}", (LINE_SQUARE, LINE_SQUARE, 0.01), mat,
-                          (x, y, GROUND_Z + 0.025), angle_to_quat((0, 0, math.degrees(heading)))))
+            line.append((f"line_{row}_{col:02d}", (LINE_SQUARE, LINE_SQUARE, 0.01), mat,
+                         (x, y, GROUND_Z + 0.025), angle_to_quat((0, 0, math.degrees(heading)))))
 
-    def nums(v):
-        return ", ".join(f"{c:.4f}" for c in v)
-
-    lua = [
-        "extensions.load('util_trackBuilder_proceduralPrimitives')",
-        "local P = util_trackBuilder_proceduralPrimitives",
-        "local function material(name, color, map)",
-        "  if scenetree.findObject(name) then return end",
-        "  local m = createObject('Material')",
-        "  if map then m:setField('diffuseMap', 0, map) end",
-        "  m:setField('diffuseColor', 0, color)",
-        "  m:registerObject(name)",
-        "end",
-        f"material('{GRASS_MATERIAL}', '{GRASS_TINT}', '{GRASS_TEXTURE}')",
-        "material('race_white', '0.95 0.95 0.95 1')",
-        "material('race_black', '0.03 0.03 0.03 1')",
-        "local function put(name, size, mat, pos, q)",
-        "  local old = scenetree.findObject(name) if old then old:delete() end",
-        "  local proc = createObject('ProceduralMesh')",
-        "  proc:registerObject(name)",
-        "  proc.canSave = false",
-        "  scenetree.MissionGroup:add(proc.obj)",
-        # createCube lays its first size component along local y, so swap x and y.
-        "  proc:createMesh({{P.createCube(vec3(size[2], size[1], size[3]), mat)}})",
-        "  proc:setPosition(vec3(pos[1], pos[2], pos[3]))",
-        "  local r = quat(q[1], q[2], q[3], q[4]):toTorqueQuat()",
-        "  proc:setField('rotation', 0, r.x .. ' ' .. r.y .. ' ' .. r.z .. ' ' .. r.w)",
-        "  proc.scale = vec3(1, 1, 1)",
-        "end",
-    ]
-    for i, (name, size, mat, pos, q) in enumerate(boxes):
-        if i == solid:
-            lua.append("be:reloadCollision()")
-        lua.append(f"put('{name}', {{{nums(size)}}}, '{mat}', {{{nums(pos)}}}, {{{nums(q)}}})")
-    bng.control.queue_lua_command("\n".join(lua))
+    world.build_boxes(bng, boxes, line, [
+        (GRASS_MATERIAL, GRASS_TINT, GRASS_TEXTURE),
+        ("race_white", "0.95 0.95 0.95 1", None),
+        ("race_black", "0.03 0.03 0.03 1", None),
+    ])
 
 
 def grid_s(i: int) -> float:

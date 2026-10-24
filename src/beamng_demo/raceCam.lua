@@ -33,6 +33,13 @@ M.setShot = function(shotMode, vid)
   mode, target, snap = shotMode, vid, true
 end
 
+-- Film the target car from one fixed spot, for example beside a hill crest.
+local spotPos = nil
+M.setSpot = function(x, y, z, vid)
+  spotPos = vec3(x, y, z)
+  mode, target, snap = 'spot', vid, true
+end
+
 M.stop = function()
   mode = nil
 end
@@ -58,7 +65,9 @@ M.onPreRender = function(dt)
   dt = math.min(dt or 0.016, 0.1)
 
   local wantPos, wantAim, kPos, kAim
-  if mode == 'tv' then
+  if mode == 'spot' and spotPos then
+    wantPos, wantAim, kPos, kAim = spotPos, p, 10.0, 10.0
+  elseif mode == 'tv' then
     local best, bestD = towers[1], math.huge
     for _, t in ipairs(towers) do
       local dd = (t - p):squaredLength()

@@ -24,16 +24,18 @@ MIN_CLIP = 4.0        # shortest clip, so a caption stays up long enough to read
 @dataclass
 class Moment:
     t: float          # replay seconds
-    kind: str         # start, pass, battle, crash, finish
+    kind: str         # start, pass, battle, crash, crest, finish
     focus: str        # vid the camera follows
     caption: str
+    spot: tuple[float, float, float] | None = None  # fixed camera position, if any
 
 
 class Spotter:
     """Watches the race each tick and notes moments worth replaying."""
 
-    def __init__(self, labels: dict[str, str]):
+    def __init__(self, labels: dict[str, str], show_laps: bool = True):
         self.labels = labels
+        self.show_laps = show_laps
         self.moments: list[Moment] = []
         self.stable: tuple[str, ...] = ()
         self.candidate: tuple[str, ...] = ()
@@ -72,21 +74,25 @@ class Spotter:
         for i, vid in enumerate(new):
             if i < len(old) and old[i] != vid and vid in old and old.index(vid) > i:
                 passed = old[i]
-                lap = int(laps.get(vid, 0)) + 1
+                lap = f"Lap {int(laps.get(vid, 0)) + 1} · " if self.show_laps else ""
                 self.moments.append(Moment(
                     rt, "pass", vid,
-                    f"Lap {lap} · {self.name(vid)} passes {self.name(passed)} for P{i + 1}"))
+                    f"{lap}{self.name(vid)} passes {self.name(passed)} for P{i + 1}"))
                 return
 
-    def crash(self, rt: float, vid: str) -> None:
-        self.moments.append(Moment(rt, "crash", vid, f"{self.name(vid)} crashes out!"))
+    def crash(self, rt: float, vid: str, caption: str = "crashes out!") -> None:
+        self.moments.append(Moment(rt, "crash", vid, f"{self.name(vid)} {caption}"))
 
     def finish(self, rt: float, vid: str, place: int) -> None:
         if place == 1:
             self.moments.append(Moment(rt, "finish", vid, f"{self.name(vid)} wins!"))
 
+    def crest(self, rt: float, vid: str, spot: tuple[float, float, float]) -> None:
+        """The leader goes over a hill crest, filmed from `spot`."""
+        self.moments.append(Moment(rt, "crest", vid, f"{self.name(vid)} over the top!", spot))
 
-RANK = {"start": 0, "battle": 1, "pass": 2, "crash": 3, "finish": 4}
+
+RANK = {"start": 0, "battle": 1, "pass": 2, "crest": 2, "crash": 3, "finish": 4}
 
 
 def build_reel(moments: list[Moment], total: float) -> list[tuple[float, float, Moment]]:
@@ -116,10 +122,13 @@ def build_reel(moments: list[Moment], total: float) -> list[tuple[float, float, 
 
 
 SHOTS = {"start": ("blimp",), "battle": ("tv", "chase"), "pass": ("chase", "tv"),
-         "crash": ("tv",), "finish": ("tv", "chase")}
+         "crash": ("tv",), "crest": ("tv",), "finish": ("tv", "chase")}
+# The same without the high orbiting blimp shot.
+SHOTS_NO_BLIMP = {**SHOTS, "start": ("tv", "chase")}
 
 
-def play_reel(bng: BeamNGpy, replay_file: str, moments: list[Moment], countdown: float) -> None:
+def play_reel(bng: BeamNGpy, replay_file: str, moments: list[Moment], countdown: float,
+              shots_by_kind: dict[str, tuple[str, ...]] = SHOTS) -> None:
     def q(chunk: str):
         return bng.control.queue_lua_command(chunk, response=True)
 
@@ -145,8 +154,12 @@ def play_reel(bng: BeamNGpy, replay_file: str, moments: list[Moment], countdown:
         if played_to is None or abs(start - played_to) > 0.5:  # back-to-back clips run on
             q(f"core_replay.seek({start / total:.5f})")
         played_to = end
-        shots = SHOTS[m.kind]
-        q(f"raceCam.setShot('{shots[0]}', '{m.focus}')")
+        shots = shots_by_kind[m.kind]
+        if m.spot:
+            shots = ("spot",)
+            q(f"raceCam.setSpot({m.spot[0]:.2f}, {m.spot[1]:.2f}, {m.spot[2]:.2f}, '{m.focus}')")
+        else:
+            q(f"raceCam.setShot('{shots[0]}', '{m.focus}')")
         bng.ui.display_message(m.caption)
         q("core_replay.pause(false)")
         length = end - start

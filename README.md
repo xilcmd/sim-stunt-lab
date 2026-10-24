@@ -80,6 +80,30 @@ the limit; default 0.75, each car gets ±0.03), `--no-avoid-cars`,
 Do not press keys or click in the game window during a race: Esc opens the
 menu, and choosing a level there ends the race. Win+Alt+R is safe.
 
+## Soapbox race
+
+`beamng-soapbox` is a downhill race inspired by Car Pal's "the Soapbox race I
+always wanted to do as a kid". Six cars start from a gate with lane dividers on
+a solid starting block 80 m up, drive down a wide orange chevron ramp that
+passes through a five-story building (in at a back window, out at a front one),
+dip and climb over a steep symmetric hill, run down a pitched house roof, funnel
+onto a narrow blue chevron ramp with gentle S-bends, and finish on the ground.
+The blue ramp is a U-shaped channel (edges 1.2 m above the middle), built as
+custom meshes because mesh roads are always flat across. The track is
+about 1,600 m to the line. A runout with side walls and a crash wall stops the
+cars after the finish. BeamNG cannot shrink cars, so the track is built big
+instead.
+
+```bash
+uv run beamng-soapbox --no-launch
+```
+
+The textures are drawn in Python and written, with a materials file, into the
+game's user folder under `levels/smallgrid/art/soapbox/`; the game loads them
+with the map. The camera, standings, and highlight reel work as in the stock car
+race. Flags: `--aggression` (default 0.8), `--shot-seconds`, `--seed`,
+`--no-highlights`, `--reel-countdown`.
+
 ### Highlight reel
 
 Each race is recorded with the game's replay system (saved under the game's
