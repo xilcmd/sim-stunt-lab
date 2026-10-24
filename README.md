@@ -30,38 +30,55 @@ uv run beamng-demo --home "/path/to/BeamNG.tech"
    Bin64\BeamNG.tech.x64.exe -nosteam -console -tcom -tport 25252 -tcom-listen-ip 0.0.0.0
    ```
 
-2. In WSL, connect to the Windows host:
+   **BeamNG.drive 0.40.3 does not include the API** (`lua/ge/extensions/tech/` is
+   missing), so `-tcom` crashes it at startup. Use 0.39.4 instead: in the Steam
+   console (`steam://open/console`) run
+   `download_depot 284160 284161 5975039348266591145`, then start the game from
+   `C:\Program Files (x86)\Steam\steamapps\content\app_284160\depot_284161`.
+
+2. In WSL, run a script. It finds the game by itself: `BNG_HOST` if set, else
+   `localhost`, else the Windows host (the WSL default gateway).
 
    ```bash
-   export BNG_HOST=$(ip route show default | awk '{print $3}')
    uv run beamng-demo --no-launch
    ```
 
    Windows Firewall must allow inbound TCP on port 25252.
-   With WSL mirrored networking, `localhost` works and you can skip the export.
 
 ## Stock car race
 
 `beamng-race` builds a rounded-rectangle track on the flat `smallgrid` map and
-races four modern cars picked for close lap times (flying lap at AI aggression
-0.8): an SBR4 Track (car1 red, 44.8 s), two ETK K-Series GT-IV touring cars
-(car2 white as the "BMW", car4 silver as the "Mercedes", 45.1 s), and a Sunburst
-Trackday (car3 yellow, 45.8 s). ETK is BeamNG's BMW stand-in; the game has no
-Mercedes look-alike.
-A checkered start/finish line crosses the track at the front of the grid.
-The cars race with BeamNG's own racing AI (`ai.driveUsingPath` with
-`avoidCars`): each picks its own line across the full track width and drives
-around the others to pass. The camera cycles
-through TV-tower, chase, and blimp shots, and the terminal prints the standings.
+races eight modern cars (see `CARS` in `race.py` for models, colours, and the
+time-trial lap time of each). ETK is BeamNG's BMW stand-in; the white and silver
+ETK GT-IV touring cars play the "BMW" and "Mercedes" (the game has no Mercedes
+look-alike).
+
+The grid is a reverse grid by time-trial lap time: slowest car on pole, fastest
+at the back, two cars per row. A checkered start/finish line crosses the track
+at the front of the grid.
+
+The cars race with BeamNG's own racing AI (`ai.driveUsingPath`) with car
+avoidance on. Each car races in its own corridor, 5 m wide, with the 8 corridor
+centres spread from 7 m inside to 7 m outside the centreline. On one shared
+full-width path every AI picks the same fastest line, so the field runs nose to
+tail: with avoidance on nobody passes, and with it off (`--no-avoid-cars`) they
+push each other off. A car that makes no progress for 15 s is out. The race ends 45 s after the winner
+finishes; cars still running are placed by distance covered.
+
+The camera cycles through TV-tower, chase, and blimp shots, and the terminal
+prints the standings.
 
 ```bash
-uv run beamng-race --no-launch --laps 5
+uv run beamng-race --no-launch
 ```
 
-Flags: `--laps`, `--direction` (`cw` right turns, default; `ccw` left turns),
-`--top-speed` (m/s), `--aggression` (BeamNG AI, 0.3 calm to 1.0 at the limit;
-default 0.8, each car gets ±0.08),
+Flags: `--laps` (default 3), `--direction` (`cw` right turns, default; `ccw`
+left turns), `--top-speed` (m/s), `--aggression` (BeamNG AI, 0.3 calm to 1.0 at
+the limit; default 0.75, each car gets ±0.03), `--no-avoid-cars`,
 `--shot-seconds`, `--seed`, plus the connection flags below.
+
+Do not press keys or click in the game window during a race: Esc opens the
+menu, and choosing a level there ends the race. Win+Alt+R is safe.
 
 ### Highlight reel
 

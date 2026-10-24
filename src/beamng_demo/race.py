@@ -9,6 +9,7 @@ from importlib import resources
 
 from beamngpy import BeamNGpy, MeshRoad, Scenario, Vehicle, angle_to_quat
 
+from beamng_demo import default_host
 from beamng_demo.highlights import Spotter, play_reel
 
 # Track: a rectangle with rounded corners on the flat smallgrid map, centred on
@@ -18,13 +19,23 @@ TRACK_LENGTH = 600.0   # x extent of the centreline, metres
 TRACK_DEPTH = 260.0    # y extent of the centreline, metres
 CORNER_RADIUS = 90.0   # centreline corner radius, metres
 TRACK_WIDTH = 24.0
-# Starting-grid slots, as lateral offsets from the centreline (+ is outward).
-LANES = (-7.5, -2.5, 2.5, 7.5)
+# Starting grid: two columns (lateral offsets from the centreline, + is outward),
+# rows GRID_ROW_GAP metres apart behind the line.
+GRID_COLUMNS = (-4.0, 4.0)
+GRID_ROW_GAP = 10.0
 GROUND_Z = 0.0
 PATH_SPACING = 8.0     # metres between racing-path nodes
-PATH_MARGIN = 2.0      # metres kept clear of each track edge
-LEAD_IN = 60.0         # metres each car stays in its grid lane after the start
-WIDEN = 80.0           # metres over which its path then widens to the full track
+# Each car races in its own corridor: a line LINE_SPREAD metres either side of the
+# centreline at most, LINE_HALF_WIDTH metres wide each way. On one full-width path
+# every AI picks the same fastest line, so the field ran nose to tail in a single
+# lane: with avoidCars on nobody passed, with it off they pushed each other off.
+LINE_SPREAD = 7.0
+LINE_HALF_WIDTH = 2.5
+# Each car keeps to its grid lane for LEAD_IN metres, then moves across to its
+# corridor over WIDEN metres. Longer (60 + 80 m) queued 8 cars in single file
+# and cost the back rows 8-11 s on lap 1.
+LEAD_IN = 15.0
+WIDEN = 40.0
 LEAD_IN_WIDTH = 2.0    # path half-width while in the grid lane
 
 # terrain_grass2 is a terrain material and shows "no texture" on a mesh, so the
@@ -39,23 +50,31 @@ WALL_HEIGHT = 1.2
 WALL_THICKNESS = 0.8
 WALL_CORNER_STEP = 2.0  # metres per wall block in the turns
 
-AGGRESSION = 0.8      # BeamNG AI: 0.3 is shopping trip, 1.0 is the limit of grip
-AGGRESSION_SPREAD = 0.08  # each car gets AGGRESSION +/- this, so paces differ
+AGGRESSION = 0.75     # BeamNG AI: 0.3 is shopping trip, 1.0 is the limit of grip
+AGGRESSION_SPREAD = 0.03  # each car gets AGGRESSION +/- this, so paces differ
 STUCK_SECONDS = 15.0   # a car that makes no progress this long is out of the race
+FINISH_GRACE = 45.0    # seconds the others get to finish after the winner
 
 CARS = (
-    # vid, model, part config, colour (RGB 0..1)
-    # Modern cars picked for close lap times on this track (flying lap, AI
-    # aggression 0.8): SBR4 Track 44.8 s, GT-IV 45.1 s, Sunburst Trackday 45.8 s.
+    # vid, model, part config, colour (RGB 0..1), caption label, lap time (s).
+    # Modern cars with close lap times on this track (flying lap, AI aggression
+    # 0.8, one time trial on 2026-10-17). The grid is a reverse grid by lap time:
+    # slowest on pole, fastest at the back, so the quick cars have to pass.
     # BeamNG has no real brands: ETK is its BMW stand-in, and the K-Series GT-IV
     # touring car also stands in for a Mercedes (no Mercedes look-alike exists).
-    ("car1", "sbr", "vehicles/sbr/track.pc", (0.85, 0.10, 0.10)),
-    ("car2", "etkc", "vehicles/etkc/race_DCT.pc", (0.92, 0.92, 0.95)),
-    ("car3", "sunburst2", "vehicles/sunburst2/trackday_M.pc", (0.95, 0.75, 0.10)),
-    ("car4", "etkc", "vehicles/etkc/race_DCT.pc", (0.62, 0.64, 0.68)),
+    ("car1", "sbr", "vehicles/sbr/track.pc", (0.85, 0.10, 0.10), "Red SBR4", 44.8),
+    ("car2", "etkc", "vehicles/etkc/race_DCT.pc", (0.92, 0.92, 0.95), "White GT-IV", 45.1),
+    ("car3", "sunburst2", "vehicles/sunburst2/trackday_M.pc", (0.95, 0.75, 0.10),
+     "Yellow Sunburst", 45.8),
+    ("car4", "etkc", "vehicles/etkc/race_DCT.pc", (0.62, 0.64, 0.68), "Silver GT-IV", 45.1),
+    ("car5", "etk800", "vehicles/etk800/rennspecht_8r_A.pc", (0.10, 0.30, 0.85),
+     "Blue Rennspecht", 45.9),
+    ("car6", "etkc", "vehicles/etkc/kc6x_trackday_A.pc", (0.10, 0.60, 0.25), "Green Kc6x", 47.3),
+    ("car7", "sbr", "vehicles/sbr/TT_AWD_S2_DCT.pc", (0.95, 0.45, 0.05), "Orange SBR4 S2", 47.3),
+    ("car8", "sunburst2", "vehicles/sunburst2/trackday_M.pc", (0.50, 0.15, 0.65),
+     "Purple Sunburst", 45.8),
 )
-LABELS = {"car1": "Red SBR4", "car2": "White GT-IV", "car3": "Yellow Sunburst",
-          "car4": "Silver GT-IV"}  # for on-screen captions
+LABELS = {c[0]: c[4] for c in CARS}  # for on-screen captions
 
 # Start/finish line: checkered squares across the track at s = 0.
 LINE_SQUARE = 1.0      # metres
@@ -119,30 +138,31 @@ def offset_point(s: float, offset: float) -> tuple[float, float]:
     return x + side * offset * math.sin(h), y - side * offset * math.cos(h)
 
 
-def drive_race(car: Vehicle, start_s: float, lane: float, laps: int,
-               aggression: float, top_speed: float) -> None:
-    """Hand the car to BeamNG's own racing AI on a path as wide as the track.
+def drive_race(car: Vehicle, start_s: float, lane: float, line: float, laps: int,
+               aggression: float, top_speed: float, avoid_cars: bool) -> None:
+    """Hand the car to BeamNG's own racing AI inside its own corridor.
 
-    The AI picks its own line and speed inside the path and, with avoidCars on,
-    sees the other cars and drives around them, so it can pass and be passed.
+    The corridor is centred `line` metres off the centreline. The AI picks its
+    own speed and exact line inside it. With avoidCars on it sees the other cars
+    and backs off when one is in its way; separate corridors mean that seldom
+    happens, so faster cars can still pass.
     The AI first heads for the path's first node, so each car's path starts in
-    its own grid lane and widens to the full track after LEAD_IN + WIDEN metres;
-    a shared start point makes all four cars converge and crash at the green flag.
+    its own grid lane and moves to its corridor after LEAD_IN + WIDEN metres;
+    a shared start point makes all the cars converge and crash at the green flag.
     """
-    half = TRACK_WIDTH / 2 - PATH_MARGIN
     end = (laps + 1) * lane_length()  # one spare lap so nobody runs out at the flag
     nodes = []
     d = 6.0
     while d < end:
         t = min(max((d - LEAD_IN) / WIDEN, 0.0), 1.0)
         t = t * t * (3 - 2 * t)  # smoothstep
-        x, y = offset_point(start_s + d, lane * (1 - t))
-        r = LEAD_IN_WIDTH + (half - LEAD_IN_WIDTH) * t
+        x, y = offset_point(start_s + d, lane + (line - lane) * t)
+        r = LEAD_IN_WIDTH + (LINE_HALF_WIDTH - LEAD_IN_WIDTH) * t
         nodes.append(f"{{x={x:.2f}, y={y:.2f}, z={GROUND_Z + 0.02:.2f}, r={r:.1f}}}")
         d += PATH_SPACING
     car.queue_lua_command(
         f"ai.driveUsingPath{{script = {{{', '.join(nodes)}}}, "
-        f"avoidCars = 'on', aggression = {aggression:.3f}, "
+        f"avoidCars = '{'on' if avoid_cars else 'off'}', aggression = {aggression:.3f}, "
         f"routeSpeed = {top_speed:.1f}, routeSpeedMode = 'limit'}}")
 
 
@@ -238,15 +258,17 @@ def car_positions(bng: BeamNGpy) -> tuple[dict[str, tuple[float, float, float]],
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--host", default=os.environ.get("BNG_HOST", "localhost"),
-                   help="Host where BeamNG listens (env BNG_HOST)")
+    p.add_argument("--host", default=default_host(),
+                   help="Host where BeamNG listens (default: env BNG_HOST, else found automatically)")
     p.add_argument("--port", type=int, default=int(os.environ.get("BNG_PORT", "25252")),
                    help="BeamNG port (env BNG_PORT)")
     p.add_argument("--home", default=os.environ.get("BNG_HOME"),
                    help="BeamNG install folder; needed only to launch the game (env BNG_HOME)")
     p.add_argument("--no-launch", action="store_true",
                    help="Connect to a game that is already running")
-    p.add_argument("--laps", type=int, default=5)
+    p.add_argument("--laps", type=int, default=3)
+    p.add_argument("--no-avoid-cars", dest="avoid_cars", action="store_false",
+                   help="AI ignores other cars: more contact and crashes")
     p.add_argument("--direction", choices=("cw", "ccw"), default="cw",
                    help="cw = right turns, ccw = left turns like most stock car ovals")
     p.add_argument("--top-speed", type=float, default=55.0,
@@ -345,8 +367,33 @@ def place_scenery(bng: BeamNGpy) -> None:
 
 
 def grid_s(i: int) -> float:
-    """Two-by-two grid on the start straight, front row inside, behind the line."""
-    return -4.0 - 12.0 * (i // 2)
+    """Arc length of grid slot i (0 = pole): two per row, behind the line."""
+    return -4.0 - GRID_ROW_GAP * (i // 2)
+
+
+def grid_lane(i: int) -> float:
+    """Lateral offset of grid slot i; pole is on the inside."""
+    return GRID_COLUMNS[i % len(GRID_COLUMNS)]
+
+
+def racing_lines(n: int) -> list[float]:
+    """Corridor centre for each grid slot: evenly spread across the track.
+
+    Cars in the inside grid column get the inside half of the lines and the
+    outside column the outside half, shuffled within each half, so nobody has
+    to cut across the field at the start.
+    """
+    step = 2 * LINE_SPREAD / max(n - 1, 1)
+    spread = [-LINE_SPREAD + k * step for k in range(n)]
+    inside, outside = spread[: (n + 1) // 2], spread[(n + 1) // 2:]
+    random.shuffle(inside)
+    random.shuffle(outside)
+    return [(inside if i % 2 == 0 else outside)[i // 2] for i in range(n)]
+
+
+def grid_order() -> list[tuple]:
+    """CARS as a reverse grid: slowest time-trial lap on pole, fastest last."""
+    return sorted(CARS, key=lambda c: c[5], reverse=True)
 
 
 def build_scenario(bng: BeamNGpy) -> tuple[Scenario, list[tuple[Vehicle, float]]]:
@@ -362,7 +409,8 @@ def build_scenario(bng: BeamNGpy) -> tuple[Scenario, list[tuple[Vehicle, float]]
     scenario.add_mesh_road(road)
 
     cars = []
-    for i, ((vid, model, config, color), offset) in enumerate(zip(CARS, LANES)):
+    for i, (vid, model, config, color, _, _) in enumerate(grid_order()):
+        offset = grid_lane(i)
         x, y, heading = track_point(grid_s(i), offset)
         car = Vehicle(vid, model=model, part_config=config, color=color, license=vid.upper())
         rot = angle_to_quat((0, 0, math.degrees(heading) + 90))  # vehicles face -y by default
@@ -390,10 +438,12 @@ def main() -> None:
         place_scenery(bng)
 
         aggression = {}
+        lines = racing_lines(len(cars))
         for i, (car, lane) in enumerate(cars):
             aggression[car.vid] = min(1.0, max(0.3, args.aggression + random.uniform(
                 -AGGRESSION_SPREAD, AGGRESSION_SPREAD)))
-            drive_race(car, grid_s(i), lane, args.laps, aggression[car.vid], args.top_speed)
+            drive_race(car, grid_s(i), lane, lines[i], args.laps, aggression[car.vid],
+                       args.top_speed, args.avoid_cars)
         print("Aggression:", ", ".join(f"{v} {a:.2f}" for v, a in aggression.items()))
 
         install_camera(bng, [car.vid for car, _ in cars])
@@ -407,6 +457,7 @@ def main() -> None:
             last[car.vid] = frac
             total[car.vid] = frac - 1 if frac > 0.5 else frac
         finished: list[str] = []
+        finish_time: dict[str, float] = {}
         out: list[str] = []  # stuck after a crash
         best = dict(total)   # furthest progress so far
         best_time = {vid: 0.0 for vid in total}
@@ -438,6 +489,7 @@ def main() -> None:
                 last[car.vid] = frac
                 if total[car.vid] >= args.laps:
                     finished.append(car.vid)
+                    finish_time[car.vid] = now
                     car.ai.set_mode("stopping")
                     spotter.finish(rt, car.vid, len(finished))
                     print(f"  {now:6.1f}s  {car.vid} takes the flag in P{len(finished)}")
@@ -464,14 +516,23 @@ def main() -> None:
                     for i, v in enumerate(order))
                 print(f"{now:6.1f}s  {board}   [cam: {director.describe()}]")
 
+            if finished and now - finish_time[finished[0]] > FINISH_GRACE:
+                print(f"{FINISH_GRACE:.0f} s after the winner: race over.")
+                break
             if now > 60 + args.laps * 60:  # safety stop if a car is stuck
                 print("Time limit reached.")
                 break
             time.sleep(0.05)
 
-        result = "  ".join(f"P{i + 1} {v.upper()}" for i, v in enumerate(finished))
+        # Cars still running are placed by distance covered, behind the finishers.
+        running = sorted((v for v in total if v not in finished and v not in out),
+                         key=total.get, reverse=True)
+        places = [f"P{i + 1} {LABELS[v]}" for i, v in enumerate(finished)]
+        places += [f"P{len(finished) + i + 1} {LABELS[v]} ({max(int(total[v]), 0)} laps)"
+                   for i, v in enumerate(running)]
+        result = "  ".join(places)
         if out:
-            result += "   Out: " + ", ".join(v.upper() for v in out)
+            result += "   Out: " + ", ".join(LABELS[v] for v in out)
         print("Result:", result)
         bng.ui.display_message(f"Checkered flag!  {result}")
         time.sleep(5)  # let the camera watch the cars slow down

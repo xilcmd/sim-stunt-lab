@@ -2,16 +2,46 @@
 
 import argparse
 import os
+import socket
+import struct
 import time
 
 from beamngpy import BeamNGpy, Scenario, Vehicle
 from beamngpy.sensors import Electrics
 
 
+def default_host() -> str:
+    """BNG_HOST if set; else localhost, or under WSL the Windows host if that answers.
+
+    With WSL's default NAT networking the game on Windows is reachable only at the
+    WSL default gateway, not at localhost; with mirrored networking localhost works.
+    """
+    if os.environ.get("BNG_HOST"):
+        return os.environ["BNG_HOST"]
+    port = int(os.environ.get("BNG_PORT", "25252"))
+    candidates = ["localhost"]
+    try:
+        with open("/proc/net/route") as f:
+            for line in f.readlines()[1:]:
+                fields = line.split()
+                if fields[1] == "00000000":  # default route; gateway is little-endian hex
+                    candidates.append(socket.inet_ntoa(struct.pack("<L", int(fields[2], 16))))
+                    break
+    except OSError:
+        pass
+    for host in candidates:
+        try:
+            with socket.create_connection((host, port), timeout=0.5):
+                return host
+        except OSError:
+            continue
+    return "localhost"
+
+
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--host", default=os.environ.get("BNG_HOST", "localhost"),
-                   help="Host where BeamNG listens (env BNG_HOST)")
+    p.add_argument("--host", default=default_host(),
+                   help="Host where BeamNG listens (default: env BNG_HOST, else found automatically)")
     p.add_argument("--port", type=int, default=int(os.environ.get("BNG_PORT", "25252")),
                    help="BeamNG port (env BNG_PORT)")
     p.add_argument("--home", default=os.environ.get("BNG_HOME"),
