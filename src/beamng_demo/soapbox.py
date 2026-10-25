@@ -8,16 +8,10 @@ ground. BeamNG cannot shrink cars, so the track is built big instead.
 
 import argparse
 import itertools
-import json
 import math
 import os
-import platform
 import random
-import struct
-import subprocess
 import time
-import zlib
-from pathlib import Path
 
 from beamngpy import BeamNGpy, MeshRoad, Scenario, Vehicle, angle_to_quat
 
@@ -280,31 +274,7 @@ class Track:
                    key=lambda i: (self.x[i] - pos[0]) ** 2 + (self.y[i] - pos[1]) ** 2)
 
 
-def quat_yaw_pitch(yaw: float, pitch: float) -> tuple[float, float, float, float]:
-    """Rotation that tips local +x down by `pitch`, then turns it to `yaw` (radians)."""
-    qz = (0.0, 0.0, math.sin(yaw / 2), math.cos(yaw / 2))
-    qy = (0.0, math.sin(pitch / 2), 0.0, math.cos(pitch / 2))
-    x1, y1, z1, w1 = qz
-    x2, y2, z2, w2 = qy
-    return (w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2,
-            w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2,
-            w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2,
-            w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2)
-
-
 # ---------------------------------------------------------------- textures
-
-def _png(width: int, height: int, pixel) -> bytes:
-    rows = b"".join(b"\x00" + bytes(c for x in range(width) for c in pixel(x, y))
-                    for y in range(height))
-
-    def chunk(kind, data):
-        return (struct.pack(">I", len(data)) + kind + data
-                + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF))
-    return (b"\x89PNG\r\n\x1a\n"
-            + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
-            + chunk(b"IDAT", zlib.compress(rows, 9)) + chunk(b"IEND", b""))
-
 
 def _chevron(color):
     # u runs across the road, v along it; three V-shaped stripes per tile.
@@ -342,32 +312,8 @@ MATERIALS = {  # material name -> texture file
 }
 
 
-def user_folder(bng: BeamNGpy) -> Path:
-    """The game's user folder as a path this machine can write to."""
-    win = str(bng.control.queue_lua_command("return FS:getUserPath()", response=True))
-    if platform.system() == "Linux" and ":" in win:  # WSL: game on Windows
-        return Path(subprocess.check_output(["wslpath", "-u", win], text=True).strip())
-    return Path(win)
-
-
 def install_art(bng: BeamNGpy) -> None:
-    """Write the textures and a materials file into the map folder of the user folder.
-
-    The game loads every *.materials.json under a map's folder when the map
-    loads, so the mesh roads can use these materials from the start.
-    """
-    folder = user_folder(bng) / ART.lstrip("/")
-    folder.mkdir(parents=True, exist_ok=True)
-    for name, pixel in TEXTURES.items():
-        path = folder / name
-        if not path.exists():
-            path.write_bytes(_png(256, 256, pixel))
-    materials = {
-        name: {"name": name, "mapTo": name, "class": "Material",
-               "Stages": [{"colorMap": f"{ART}/{tex}"}, {}, {}, {}],
-               "materialTag0": "beamng"}
-        for name, tex in MATERIALS.items()}
-    (folder / "soapbox.materials.json").write_text(json.dumps(materials, indent=2))
+    world.install_art(bng, ART, TEXTURES, MATERIALS)
 
 
 # ---------------------------------------------------------------- scene
@@ -404,7 +350,7 @@ def build_scenario(bng: BeamNGpy, track: Track, order: list[tuple]) -> tuple[Sce
     for k, (vid, model, config, color, _) in enumerate(order):
         x, y, z = track.point(s, slot_lateral(k))
         car = Vehicle(vid, model=model, part_config=config, color=color, license=vid.upper())
-        rot = angle_to_quat((0, -math.degrees(track.slope(i)), math.degrees(track.heading(i)) + 90))
+        rot = world.spawn_rotation(track.heading(i), track.slope(i))
         scenario.add_vehicle(car, pos=(x, y, z + 0.8), rot_quat=rot)
         cars.append((car, slot_lateral(k)))
     scenario.make(bng)
@@ -470,7 +416,7 @@ def place_scenery(bng: BeamNGpy, track: Track) -> None:
         lateral = (k - len(CARS) / 2) * SLOT_WIDTH
         x, y, z = track.point(track.s[mid], lateral)
         solid.append((f"soap_div_{k:02d}", (length, 0.2, DIVIDER_HEIGHT), "soap_divider",
-                      (x, y, z + DIVIDER_HEIGHT / 2), quat_yaw_pitch(track.heading(mid), pitch)))
+                      (x, y, z + DIVIDER_HEIGHT / 2), world.quat_yaw_pitch(track.heading(mid), pitch)))
 
     # Starting block: a solid block under the start gate.
     gate_end = track.index(DIVIDER_END)

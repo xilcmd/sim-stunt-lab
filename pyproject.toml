@@ -15,6 +15,7 @@ dependencies = [
 beamng-demo = "beamng_demo:main"
 beamng-race = "beamng_demo.race:main"
 beamng-soapbox = "beamng_demo.soapbox:main"
+beamng-bigjump = "beamng_demo.bigjump:main"
 
 [build-system]
 requires = ["uv_build>=0.12.23,<0.13.0"]

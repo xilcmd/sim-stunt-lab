@@ -314,7 +314,7 @@ def build_scenario(bng: BeamNGpy) -> tuple[Scenario, list[tuple[Vehicle, float]]
         offset = grid_lane(i)
         x, y, heading = track_point(grid_s(i), offset)
         car = Vehicle(vid, model=model, part_config=config, color=color, license=vid.upper())
-        rot = angle_to_quat((0, 0, math.degrees(heading) + 90))  # vehicles face -y by default
+        rot = world.spawn_rotation(heading)
         scenario.add_vehicle(car, pos=(x, y, GROUND_Z + 0.5), rot_quat=rot)
         cars.append((car, offset))
 

@@ -1,16 +1,90 @@
 """Pieces shared by the races: camera, car control, and building boxes in the world."""
 
+import json
 import math
+import platform
 import random
+import struct
+import subprocess
+import zlib
 from importlib import resources
+from pathlib import Path
 
-from beamngpy import BeamNGpy, Vehicle
+from beamngpy import BeamNGpy, Vehicle, angle_to_quat
 
 # Box = (name, size (x, y, z), material, centre pos, rotation quat (x, y, z, w)).
 Box = tuple[str, tuple[float, float, float], str, tuple[float, float, float],
             tuple[float, float, float, float]]
 # Material = (name, colour "r g b a", texture path or None).
 Material = tuple[str, str, str | None]
+
+
+def quat_yaw_pitch(yaw: float, pitch: float) -> tuple[float, float, float, float]:
+    """Rotation that tips local +x down by `pitch`, then turns it to `yaw` (radians)."""
+    qz = (0.0, 0.0, math.sin(yaw / 2), math.cos(yaw / 2))
+    qy = (0.0, math.sin(pitch / 2), 0.0, math.cos(pitch / 2))
+    x1, y1, z1, w1 = qz
+    x2, y2, z2, w2 = qy
+    return (w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2,
+            w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2,
+            w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2,
+            w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2)
+
+
+def spawn_rotation(heading: float, downhill: float = 0.0) -> tuple[float, float, float, float]:
+    """Rotation for a vehicle to face `heading` (radians, 0 = +x), on a slope
+    `downhill` radians steep.
+
+    A yaw of heading - 90 degrees faces the car along the heading. The races
+    first used heading + 90, which spawned every car facing exactly backward:
+    the AI had to turn each one round at the start, and the chase camera sat in
+    front of it. Checked by driving and with getDirectionVector.
+    """
+    return angle_to_quat((0, -math.degrees(downhill), math.degrees(heading) - 90))
+
+
+def png_bytes(width: int, height: int, pixel) -> bytes:
+    """An RGB PNG; pixel(x, y) returns (r, g, b) as 0..255 ints."""
+    rows = b"".join(b"\x00" + bytes(c for x in range(width) for c in pixel(x, y))
+                    for y in range(height))
+
+    def chunk(kind, data):
+        return (struct.pack(">I", len(data)) + kind + data
+                + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF))
+    return (b"\x89PNG\r\n\x1a\n"
+            + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(rows, 9)) + chunk(b"IEND", b""))
+
+
+def user_folder(bng: BeamNGpy) -> Path:
+    """The game's user folder as a path this machine can write to."""
+    win = str(bng.control.queue_lua_command("return FS:getUserPath()", response=True))
+    if platform.system() == "Linux" and ":" in win:  # WSL: game on Windows
+        return Path(subprocess.check_output(["wslpath", "-u", win], text=True).strip())
+    return Path(win)
+
+
+def install_art(bng: BeamNGpy, art: str, textures: dict, materials: dict[str, str],
+                size: int = 256) -> None:
+    """Write textures and a materials file into a map folder of the user folder.
+
+    `art` is a game path such as /levels/smallgrid/art/soapbox; `textures` maps
+    file names to pixel functions, `materials` maps material names to texture
+    files. The game loads every *.materials.json under a map's folder when the
+    map loads, so mesh roads can use these materials from the start.
+    """
+    folder = user_folder(bng) / art.lstrip("/")
+    folder.mkdir(parents=True, exist_ok=True)
+    for name, pixel in textures.items():
+        path = folder / name
+        if not path.exists():
+            path.write_bytes(png_bytes(size, size, pixel))
+    data = {
+        name: {"name": name, "mapTo": name, "class": "Material",
+               "Stages": [{"colorMap": f"{art}/{tex}"}, {}, {}, {}],
+               "materialTag0": "beamng"}
+        for name, tex in materials.items()}
+    (folder / f"{folder.name}.materials.json").write_text(json.dumps(data, indent=2))
 
 
 def install_camera(bng: BeamNGpy, vids: list[str],
@@ -179,6 +253,43 @@ end)""")
             f"raceMeshPut('{name}', '{mat}', {ox:.3f}, {oy:.3f}, {oz:.3f}, "
             f"{{{flat(verts, '%.3f')}}}, {{{flat(normals, '%.4f')}}}, "
             f"{{{flat(uvs, '%.4f')}}}, {{{flat(tris, '%d')}}})")
+
+
+# Cone = (name, base radius, height, material, base centre position).
+Cone = tuple[str, float, float, str, tuple[float, float, float]]
+
+
+def build_cones(bng: BeamNGpy, cones: list[Cone]) -> None:
+    """Visual-only cones, for example far-off mountains (call after build_boxes)."""
+    lua = ["extensions.load('util_trackBuilder_proceduralPrimitives')",
+           "local P = util_trackBuilder_proceduralPrimitives",
+           "local function cone(name, r, h, mat, x, y, z)",
+           "  local old = scenetree.findObject(name) if old then old:delete() end",
+           "  local proc = createObject('ProceduralMesh')",
+           "  proc:registerObject(name)",
+           "  proc.canSave = false",
+           "  scenetree.MissionGroup:add(proc.obj)",
+           "  proc:createMesh({{P.createCone(r, h, mat)}})",
+           "  proc:setPosition(vec3(x, y, z))",
+           "  proc.scale = vec3(1, 1, 1)",
+           "end"]
+    for name, r, h, mat, (x, y, z) in cones:
+        lua.append(f"cone('{name}', {r:.1f}, {h:.1f}, '{mat}', {x:.1f}, {y:.1f}, {z:.1f})")
+    bng.control.queue_lua_command("\n".join(lua))
+
+
+def add_water(bng: BeamNGpy, name: str, centre: tuple[float, float, float],
+              size: tuple[float, float, float]) -> None:
+    """A block of water (a WaterBlock) with its box centred on `centre`."""
+    x, y, z = centre
+    sx, sy, sz = size
+    bng.control.queue_lua_command(f"""
+local old = scenetree.findObject('{name}') if old then old:delete() end
+local w = createObject('WaterBlock')
+w:setPosition(vec3({x:.2f}, {y:.2f}, {z:.2f}))
+w:setField('scale', 0, '{sx:.2f} {sy:.2f} {sz:.2f}')
+w:registerObject('{name}')
+scenetree.MissionGroup:add(w.obj)""")
 
 
 def build_boxes(bng: BeamNGpy, solid: list[Box], visual: list[Box],

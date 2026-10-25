@@ -104,6 +104,25 @@ with the map. The camera, standings, and highlight reel work as in the stock car
 race. Flags: `--aggression` (default 0.8), `--shot-seconds`, `--seed`,
 `--no-highlights`, `--reel-countdown`.
 
+## Big jump
+
+`beamng-bigjump` sends random cars from the game's car list, one at a time, at
+full throttle down a ski-jump style ramp, inspired by DestructionNation's "Big
+Ramp Jumps with Random Cars" video. A 150 m start tower leads to a 30° in-run
+with hazard-striped edges and low walls, a level takeoff lip, and a long landing
+hill with distance lines and signs every 25 m. Each jump is measured along the
+landing hill from the knoll, like ski jumping, and a scoreboard follows the last
+car. Grandstands line the outrun, a pool with water waits at the end, light
+towers and a judges' tower stand beside the hill, and mountains ring the course.
+
+```bash
+uv run beamng-bigjump --no-launch --jumps 10
+```
+
+Flags: `--jumps` (default 10), `--seed` (repeat the same car picks). The cars
+are driven by the game AI told to hold an unreachable speed, because spawned
+cars ignore direct throttle input; the AI is switched off at the lip.
+
 ### Highlight reel
 
 Each race is recorded with the game's replay system (saved under the game's
