@@ -29,13 +29,17 @@ M.setup = function(vidList, towerList)
   commands.setFreeCamera()
 end
 
+-- Each shot takes the camera back from the game, which may have been handed a
+-- car's own camera (for example orbit) in the meantime.
 M.setShot = function(shotMode, vid)
+  commands.setFreeCamera()
   mode, target, snap = shotMode, vid, true
 end
 
 -- Film the target car from one fixed spot, for example beside a hill crest.
 local spotPos = nil
 M.setSpot = function(x, y, z, vid)
+  commands.setFreeCamera()
   spotPos = vec3(x, y, z)
   mode, target, snap = 'spot', vid, true
 end
@@ -75,7 +79,9 @@ M.onPreRender = function(dt)
     end
     wantPos, wantAim, kPos, kAim = best, p, 1.0, 10.0
   elseif mode == 'chase' then
-    local f = vec3(d.x, d.y, 0):normalized()
+    -- Along the car's own direction, slope included: a flat offset put the
+    -- camera inside a steep ramp behind the car.
+    local f = d:normalized()
     wantPos = p - f * 14 + vec3(0, 0, 4.5)
     wantAim = p + f * 12 + vec3(0, 0, 1)
     kPos, kAim = 6.0, 8.0

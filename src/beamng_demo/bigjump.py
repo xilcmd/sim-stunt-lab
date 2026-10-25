@@ -60,6 +60,11 @@ FULL_THROTTLE_SPEED = 100.0     # m/s the AI is told to hold: more than any car 
 AI_FIRST_NODE = 12.0            # metres ahead of the car; at 6 m the car passed it at
                                 # once and the AI backed up and stopped
 OVERVIEW_CAMERA = ((90.0, 260.0, 130.0), (0.05, -0.92, -0.38))  # side view of the course
+GROUND_CAM_AFTER = 60.0         # metres past the lip where the ground camera takes over
+GROUND_CAM_AHEAD = 30.0         # it stands this far onto the flat outrun...
+GROUND_CAM_SIDE = 12.0          # ...this far out from the track edge...
+GROUND_CAM_HEIGHT = 1.7         # ...at eye level
+ORBIT_AGAIN_AT = 200.0          # metres down the landing hill: back to the orbit camera
 MAX_BELIEVABLE_SPEED = 150.0    # m/s; faster readings are position glitches
 SPEED_WINDOW = 0.5              # seconds to average speed over
 AIRBORNE = 3.0                  # metres above the surface that counts as flying
@@ -206,6 +211,12 @@ def _sign(number: int):
     return pixel
 
 
+def _mirrored(pixel):
+    def flipped(px, py):
+        return pixel(TEXTURE_SIZE - 1 - px, py)
+    return flipped
+
+
 def marks() -> list[int]:
     return list(range(MARK_FIRST, MARK_LAST + 1, MARK_EVERY))
 
@@ -221,6 +232,8 @@ def install_art(bng: BeamNGpy) -> None:
     for d in marks():
         textures[f"sign_{d}.png"] = _sign(d)
         materials[f"jump_sign_{d}"] = f"sign_{d}.png"
+        textures[f"sign_{d}_back.png"] = _mirrored(_sign(d))
+        materials[f"jump_sign_{d}_back"] = f"sign_{d}_back.png"
     world.install_art(bng, ART, textures, materials, TEXTURE_SIZE)
 
 
@@ -311,8 +324,13 @@ def place_scenery(bng: BeamNGpy, inrun: Profile, landing: Profile) -> None:
                        (x, 0, z + 0.02), world.quat_yaw_pitch(0.0, pitch)))
         for side in (-1, 1):
             y = side * (LANDING_WIDTH / 2 + 3)
-            visual.append((f"jump_sign_{d}_{side + 1}", (0.3, 4.0, 2.5), f"jump_sign_{d}",
-                           (x, y, z + 2.2), flat))
+            # Two boards back to back. A box shows its texture mirrored on the
+            # downhill face (the 200 sign read "002" from below), so the
+            # downhill board carries a mirrored copy, which reads the right way.
+            visual.append((f"jump_sign_{d}_{side + 1}", (0.15, 4.0, 2.5), f"jump_sign_{d}",
+                           (x - 0.08, y, z + 2.2), flat))
+            visual.append((f"jump_signback_{d}_{side + 1}", (0.15, 4.0, 2.5), f"jump_sign_{d}_back",
+                           (x + 0.08, y, z + 2.2), flat))
             visual.append((f"jump_signpost_{d}_{side + 1}", (0.3, 0.3, 1.0), "jump_post",
                            (x, y, z + 0.5), flat))
 
@@ -492,7 +510,12 @@ def jump(bng: BeamNGpy, n: int, model: str, config: str, name: str,
     start_z, _ = inrun.at_x(SPAWN_X)
     bng.vehicles.spawn(car, pos=(SPAWN_X, 0, start_z + 0.8), rot_quat=world.spawn_rotation(0.0))
     world.install_camera(bng, [vid], [])
-    bng.control.queue_lua_command(f"raceCam.setShot('chase', '{vid}')")
+    # The game's own orbit camera on the in-run: it is attached to the car and
+    # follows the slope. A free chase camera on a flat offset sat inside the
+    # 30 degree ramp behind the car. raceCam takes over again at the lip.
+    bng.control.queue_lua_command("raceCam.stop()")
+    bng.vehicles.switch(car)
+    bng.camera.set_player_mode(car, "orbit", {})
     time.sleep(2.0)  # let it settle on the platform
     bng.ui.display_message(f"Jump {n}: {name}")
     print(f"Jump {n}: {name}")
@@ -512,8 +535,12 @@ def jump(bng: BeamNGpy, n: int, model: str, config: str, name: str,
         f"routeSpeed = {FULL_THROTTLE_SPEED}, routeSpeedMode = 'set'}}")
 
     lip_spot = (lip_x + 12, 24.0, lip_z + 2)
-    land_x = lip_x + 80
-    land_spot = (land_x, LANDING_WIDTH / 2 + 35, landing.at_x(land_x)[0] + 18)
+    # Last part: a free camera at eye level on the ground beside the outrun,
+    # looking up the hill as the car comes down and lands.
+    flat_x = next(lx for lx, lz in zip(landing.x, landing.z) if lz < 0.05)
+    orbit_again_x = landing.at_s(ORBIT_AGAIN_AT)[0]
+    land_spot = (flat_x + GROUND_CAM_AHEAD, LANDING_WIDTH / 2 + GROUND_CAM_SIDE,
+                 GROUND_Z + GROUND_CAM_HEIGHT)
     phase = "inrun"
     airborne = False
     distance = None
@@ -545,10 +572,14 @@ def jump(bng: BeamNGpy, n: int, model: str, config: str, name: str,
         if phase == "lip" and x > lip_x:
             phase = "flight"
             car.ai.set_mode("disabled")
-        if phase == "flight" and x > lip_x + 25:
+        if phase == "flight" and x > lip_x + GROUND_CAM_AFTER:
             phase = "landing"
             bng.control.queue_lua_command(
                 f"raceCam.setSpot({land_spot[0]:.1f}, {land_spot[1]:.1f}, {land_spot[2]:.1f}, '{vid}')")
+        if phase == "landing" and x > orbit_again_x:  # back on the car's own orbit camera
+            phase = "rollout"
+            bng.control.queue_lua_command("raceCam.stop()")
+            bng.camera.set_player_mode(car, "orbit", {})
 
         if x > lip_x and distance is None:
             surface, along = landing.at_x(x)
