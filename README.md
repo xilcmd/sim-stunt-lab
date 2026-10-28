@@ -112,16 +112,28 @@ Ramp Jumps with Random Cars" video. A 150 m start tower leads to a 30° in-run
 with hazard-striped edges and low walls, a level takeoff lip, and a long landing
 hill with distance lines and signs every 25 m. Each jump is measured along the
 landing hill from the knoll, like ski jumping, and a scoreboard follows the last
-car. Grandstands line the outrun, a pool with water waits at the end, light
-towers and a judges' tower stand beside the hill, and mountains ring the course.
+car. Grandstands line the outrun, a pool with water waits where wrecked cars
+usually run out of speed, and light towers and a judges' tower stand beside the
+hill.
+
+By default the course stands on a hillside in the Italy map, looking out over
+the sea: the spot was chosen by scoring placements against the map's height
+grid, the trees along the course are removed, and posts and towers reach down
+to the real ground. `--map smallgrid` builds it on the empty grid map instead,
+with a grass slab and cone mountains.
+
+Each car ends with one mark: in the pool (the win: a wreck that still limps
+into the water), overshot the pool, short of the pool, or off the side. The
+scoreboard shows jump distance (metres), the mark, and top speed (mph).
 
 ```bash
 uv run beamng-bigjump --no-launch --jumps 10
 ```
 
-Flags: `--jumps` (default 10), `--seed` (repeat the same car picks). The cars
-are driven by the game AI told to hold an unreachable speed, because spawned
-cars ignore direct throttle input; the AI is switched off at the lip.
+Flags: `--jumps` (default 10), `--seed` (repeat the same car picks), `--map`
+(`italy`, default, or `smallgrid`). The cars are driven by the game AI told to
+hold an unreachable speed, because spawned cars ignore direct throttle input;
+the AI is switched off at the lip.
 
 ### Highlight reel
 

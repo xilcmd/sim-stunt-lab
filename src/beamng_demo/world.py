@@ -20,7 +20,12 @@ Material = tuple[str, str, str | None]
 
 
 def quat_yaw_pitch(yaw: float, pitch: float) -> tuple[float, float, float, float]:
-    """Rotation that tips local +x down by `pitch`, then turns it to `yaw` (radians)."""
+    """Rotation that tips local +x down by `pitch`, then turns it to `yaw` (radians).
+
+    Usual maths order (yaw quaternion times pitch quaternion). build_boxes
+    sends the inverse, because the game applies the inverse of the rotation
+    it is given.
+    """
     qz = (0.0, 0.0, math.sin(yaw / 2), math.cos(yaw / 2))
     qy = (0.0, math.sin(pitch / 2), 0.0, math.cos(pitch / 2))
     x1, y1, z1, w1 = qz
@@ -279,14 +284,17 @@ def build_cones(bng: BeamNGpy, cones: list[Cone]) -> None:
 
 
 def add_water(bng: BeamNGpy, name: str, centre: tuple[float, float, float],
-              size: tuple[float, float, float]) -> None:
-    """A block of water (a WaterBlock) with its box centred on `centre`."""
+              size: tuple[float, float, float], heading: float = 0.0) -> None:
+    """A block of water (a WaterBlock) with its box centred on `centre`,
+    turned `heading` degrees about the vertical. The rotation field is applied
+    inverted, like box rotations, so the angle is sent negated."""
     x, y, z = centre
     sx, sy, sz = size
     bng.control.queue_lua_command(f"""
 local old = scenetree.findObject('{name}') if old then old:delete() end
 local w = createObject('WaterBlock')
 w:setPosition(vec3({x:.2f}, {y:.2f}, {z:.2f}))
+w:setField('rotation', 0, '0 0 1 {-heading:.3f}')
 w:setField('scale', 0, '{sx:.2f} {sy:.2f} {sz:.2f}')
 w:registerObject('{name}')
 scenetree.MissionGroup:add(w.obj)""")
@@ -333,9 +341,15 @@ def build_boxes(bng: BeamNGpy, solid: list[Box], visual: list[Box],
     ]
     for name, color, texture in materials:
         lua.append(f"material('{name}', '{color}', {repr(texture) if texture else 'nil'})")
+    def inverse(q):
+        # The game applies the inverse of the rotation it is given (a probe at
+        # +30 degrees yaw came out at -30, tipped up instead of down), so send
+        # the inverse to get the rotation we mean.
+        return (-q[0], -q[1], -q[2], q[3])
+
     for name, size, mat, pos, q in solid:
-        lua.append(f"put('{name}', {{{nums(size)}}}, '{mat}', {{{nums(pos)}}}, {{{nums(q)}}})")
+        lua.append(f"put('{name}', {{{nums(size)}}}, '{mat}', {{{nums(pos)}}}, {{{nums(inverse(q))}}})")
     lua.append("be:reloadCollision()")
     for name, size, mat, pos, q in visual:
-        lua.append(f"put('{name}', {{{nums(size)}}}, '{mat}', {{{nums(pos)}}}, {{{nums(q)}}})")
+        lua.append(f"put('{name}', {{{nums(size)}}}, '{mat}', {{{nums(pos)}}}, {{{nums(inverse(q))}}})")
     bng.control.queue_lua_command("\n".join(lua))
