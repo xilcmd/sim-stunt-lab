@@ -1,8 +1,10 @@
 [project]
 name = "beamng-demo"
 version = "0.1.0"
-description = "Small BeamNGpy demo: AI drives a car, script prints its speed"
+description = "Scripted race and stunt scenarios for the BeamNG simulator, using BeamNGpy"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [
     { name = "Doctor J", email = "xilcmd@gmail.com" }
 ]

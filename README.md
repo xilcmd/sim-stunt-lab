@@ -1,7 +1,23 @@
-# beamng-demo
+# sim-stunt-lab
 
-A small BeamNGpy demo. It loads the `west_coast_usa` map, spawns an ETK 800,
-turns on the built-in AI driver, and prints speed, RPM, and gear once per second.
+Scripted race and stunt scenarios for the BeamNG driving simulator, written in
+Python with [BeamNGpy](https://github.com/BeamNG/BeamNGpy): an 8-car race with a
+replay highlight reel (`beamng-race`), a downhill toy-track course
+(`beamng-soapbox`), and a ski-jump show with random cars (`beamng-bigjump`). A
+one-car starter demo (`beamng-demo`) loads the `west_coast_usa` map, spawns an
+ETK 800, turns on the built-in AI driver, and prints speed, RPM, and gear once
+per second.
+
+A learning project: non-commercial, MIT licensed (see `LICENSE`).
+
+## Credits and requirements
+
+Built on [BeamNG.tech](https://beamng.tech) / BeamNG.drive and BeamNGpy by
+BeamNG GmbH. You need your own copy of the simulator. This project is not made,
+endorsed, or supported by BeamNG; BeamNG names are used only to say what the
+code works with. All maps, vehicles and models come from the simulator and are
+not part of this repository. The courses draw ideas from videos by Car Pal and
+DestructionNation; no material from those videos is included.
 
 ## Setup
 
