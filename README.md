@@ -124,9 +124,9 @@ race. Flags: `--aggression` (default 0.8), `--shot-seconds`, `--seed`,
 
 `beamng-bigjump` sends random cars from the game's car list, one at a time, at
 full throttle down a ski-jump style ramp, inspired by DestructionNation's "Big
-Ramp Jumps with Random Cars" video. A 162 m start tower leads to a 30° in-run
-with hazard-striped edges and low walls and a level takeoff lip. An open 50 m
-gap separates the lip from a long landing hill, 16 m lower, with distance lines
+Ramp Jumps with Random Cars" video. A 196 m start tower leads to a 160 m, 30° in-run
+with hazard-striped edges and low walls and a level takeoff lip. An open 75 m
+gap separates the lip from a long landing hill, 25 m lower, with distance lines
 and signs every 25 m. Each jump is measured along the landing hill from the
 knoll (the gap is not counted), like ski jumping, and a scoreboard follows the last
 car. Grandstands line the outrun, a pool with water waits where wrecked cars
@@ -136,8 +136,21 @@ hill.
 By default the course stands on a hillside in the Italy map, looking out over
 the sea: the spot was chosen by scoring placements against the map's height
 grid, the trees along the course are removed, and posts and towers reach down
-to the real ground. `--map smallgrid` builds it on the empty grid map instead,
+to the real ground. `--type smallgrid` builds it on the empty grid map instead,
 with a grass slab and cone mountains.
+
+More settings: `jungle_rock_island`, `west_coast_usa` and `small_island` were
+found by the scout. `beamng-bigjump-scout <map>` loads a map, measures its ground
+on a grid, scores every position and heading (course close above the hillside,
+facing water if there is a sea), checks the best spot every 4 m in the game, and
+saves it to `src/beamng_demo/sites.json`. Options: `--name` to save it under
+another name, `--pick 2` to take the second-best spot.
+
+`jungle_rock_island` has an ocean finish: no pool, the outrun is plain track to
+its end, 26 m above the sea. A car that does not stop drives off the end and
+drops into the ocean (the win). To give another setting this finish, add
+`"finish": "ocean"` and `"sea_z": <map height of the sea>` to its entry in
+`sites.json`.
 
 Each car ends with one mark: in the pool (the win: a wreck that still limps
 into the water), overshot the pool, short of the pool, or off the side. The
@@ -147,8 +160,8 @@ scoreboard shows jump distance (metres), the mark, and top speed (mph).
 uv run beamng-bigjump --no-launch --jumps 10
 ```
 
-Flags: `--jumps` (default 10), `--seed` (repeat the same car picks), `--map`
-(`italy`, default, or `smallgrid`). The cars are driven by the game AI told to
+Flags: `--jumps` (default 10), `--seed` (repeat the same car picks), `--type`
+(the setting: `italy`, default, or any name in `sites.json`; `--map` also works). The cars are driven by the game AI told to
 hold an unreachable speed, because spawned cars ignore direct throttle input;
 the AI is switched off at the lip.
 

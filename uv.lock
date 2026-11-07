@@ -59,10 +59,14 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "beamngpy" },
+    { name = "numpy" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "beamngpy", specifier = "==1.35.1" }]
+requires-dist = [
+    { name = "beamngpy", specifier = "==1.35.1" },
+    { name = "numpy", specifier = ">=2.5.4" },
+]
 
 [[package]]
 name = "beamngpy"

@@ -7,12 +7,14 @@ jump is measured along the landing hill from the knoll, like ski jumping.
 """
 
 import argparse
+import json
 import math
 import os
 import random
 import time
 from collections import deque
 from dataclasses import dataclass
+from pathlib import Path
 
 from beamngpy import BeamNGpy, MeshRoad, Scenario, Vehicle
 from beamngpy.logging import BNGError
@@ -34,6 +36,10 @@ class Site:
     heading: float      # degrees, direction of travel; 0 = map +x
     base_z: float       # map height of the outrun surface
     flat_floor: bool    # empty map: add a grass slab and cone mountains
+    # "pool": a pool on the end of the outrun. "ocean": no pool, the outrun just
+    # ends above the sea, and cars that do not stop drop into it.
+    finish: str = "pool"
+    sea_z: float | None = None  # map height of the sea (needed for "ocean")
 
     @property
     def yaw(self) -> float:
@@ -68,6 +74,16 @@ SITES = {
     # 4 m check in the game found something taller under the outrun's edge.
     "italy": Site("italy", -576.0, 832.0, 30.0, 186.4, flat_floor=False),
 }
+SITES_FILE = Path(__file__).with_name("sites.json")  # spots found by beamng-bigjump-scout
+
+
+def load_sites() -> dict[str, Site]:
+    sites = dict(SITES)
+    if SITES_FILE.exists():
+        for name, d in json.loads(SITES_FILE.read_text()).items():
+            sites[name] = Site(d["level"], d["x"], d["y"], d["heading"], d["base_z"], flat_floor=False,
+                               finish=d.get("finish", "pool"), sea_z=d.get("sea_z"))
+    return sites
 
 # Profiles are built from exact straight lines and circular arcs, in the u-z
 # plane along v = 0, toward +u. ("line", length, angle) and
@@ -78,16 +94,22 @@ SITES = {
 # longer without changing the in-run drop.
 # The in-run sits LIP_GAP metres back from the landing hill: an open gap
 # between the lip and the knoll. The landing hill, stands and pool stay put.
-LIP_GAP = 50.0
-# The in-run is 12 m higher than the landing needs: moved back, its lower part
-# cut 10.4 m into the Italy hillside. KNOLL_DROP grows by the same 12 m, so the
-# landing hill, stands and pool keep their old heights.
-INRUN_RAISE = 12.0
-START_X, START_Z = -15.0 - LIP_GAP, 150.0 + INRUN_RAISE
+LIP_GAP = 75.0
+# The in-run is INRUN_RAISE higher than the landing needs: moved back, it cut
+# into the rising Italy hillside. 21 m leaves 1.7 m of clearance at a 75 m gap.
+# KNOLL_DROP grows by the same amount, so the landing hill, stands and pool keep
+# their old heights. A 100 m gap needed 28 m and was too harsh: most cars landed
+# within 30 m of the knoll and a truck fell into the gap.
+INRUN_RAISE = 21.0
+# The 30 degree in-run is INRUN_EXTRA metres longer than the first design. The
+# start moves back and up to match, so the lip stays put.
+INRUN_EXTRA = 50.0
+START_X = -15.0 - LIP_GAP - INRUN_EXTRA * math.cos(math.radians(30))
+START_Z = 150.0 + INRUN_RAISE + INRUN_EXTRA * math.sin(math.radians(30))
 INRUN = [
     ("line", 27, 0),            # start platform (long enough for a truck)
     ("arc", 40, 0, -30),
-    ("line", 110, -30),         # the in-run
+    ("line", 110 + INRUN_EXTRA, -30),  # the in-run
     ("arc", 100, -30, 0),       # transition into the lip
     ("line", 6, 0),             # takeoff lip, level
 ]
@@ -124,7 +146,7 @@ OVERVIEW_CAMERA = ((90.0, 260.0, 130.0), (0.05, -0.92, -0.38))  # side view of t
 # metres down the hill. A ground camera beside the outrun was dropped: with the
 # shorter outrun the stands and their roof hid the car.
 LIP_CAM_UP = 6.0                # lip camera height above the lip
-LIP_CAM_AHEAD = 62.0            # ...and how far past the lip it stands (at 12 m, over the gap,
+LIP_CAM_AHEAD = LIP_GAP + 12.0            # ...and how far past the lip it stands (at 12 m, over the gap,
                                 # the landing hill hid the landing)
 ORBIT_AGAIN_AT = 100.0          # metres down the landing hill: back to the orbit camera
 TREE_STEP = 8.0                 # metres between tree-clearing circles along the course
@@ -476,7 +498,8 @@ def place_scenery(bng: BeamNGpy, site: Site, inrun: Profile, landing: Profile) -
     ])
     if site.flat_floor:  # a real map has real mountains
         world.build_cones(bng, mountains(site, landing))
-    world.add_water(bng, "jump_pool_water", *water)
+    if water:
+        world.add_water(bng, "jump_pool_water", *water)
 
 
 def pool_extent(landing: Profile) -> tuple[float, float, float]:
@@ -498,10 +521,22 @@ def pool_result(landing: Profile, u: float, v: float) -> str:
     return "pool" if abs(v) <= half else "off the side"
 
 
+def ocean_result(site: Site, landing: Profile, u: float, v: float, z: float) -> str:
+    """Where a car came to rest on an ocean finish: 'ocean' (in the sea: the
+    win), 'rocks' (off the end, but on the shore), 'stopped' (on the track),
+    or 'off the side'."""
+    if z < site.sea_z - site.base_z + 1.0:
+        return "ocean"
+    if abs(v) > LANDING_WIDTH / 2 + 1:
+        return "off the side"
+    return "rocks" if u > landing.end()[0] else "stopped"
+
+
 def decorate(solid: list, visual: list, solid_pillars: list, visual_pillars: list,
              site: Site, inrun: Profile, landing: Profile):
     """Grandstands, pool, judges' tower, light towers, start roof and the
-    checkered lip. Returns the pool's water block (centre, size, heading)."""
+    checkered lip. Returns the pool's water block (centre, size, heading), or
+    None on an ocean finish (no pool: the outrun is plain track to its end)."""
     lip_x, lip_z = inrun.end()
     flat_x = next(x for x, z in zip(landing.x, landing.z) if z < 0.05)
     edge = LANDING_WIDTH / 2
@@ -509,17 +544,19 @@ def decorate(solid: list, visual: list, solid_pillars: list, visual_pillars: lis
     # Pool on the last part of the outrun, so the road is its floor on any map;
     # no wall on the outrun side, so cars can drive into the water.
     px0, _, half_y = pool_extent(landing)
-    inner_x, inner_y = POOL_LENGTH, 2 * half_y
-    pcx = px0 + inner_x / 2
-    wall = POOL_WALL
-    for name, size, (u, v) in (
-            ("far", (wall, inner_y + 2 * wall), (px0 + inner_x + wall / 2, 0)),
-            ("left", (inner_x, wall), (pcx, inner_y / 2 + wall / 2)),
-            ("right", (inner_x, wall), (pcx, -inner_y / 2 - wall / 2))):
-        solid_pillars.append((f"jump_pool_{name}", size, "jump_tiles", (u, v), POOL_HEIGHT))
-    visual.append(("jump_pool_bottom", (inner_x, inner_y, 0.05), "jump_pool_floor",
-                   site.world(pcx, 0, 0.04), site.rot()))
-    water = (site.world(pcx, 0, POOL_WATER / 2), (inner_x, inner_y, POOL_WATER), site.heading)
+    water = None
+    if site.finish == "pool":
+        inner_x, inner_y = POOL_LENGTH, 2 * half_y
+        pcx = px0 + inner_x / 2
+        wall = POOL_WALL
+        for name, size, (u, v) in (
+                ("far", (wall, inner_y + 2 * wall), (px0 + inner_x + wall / 2, 0)),
+                ("left", (inner_x, wall), (pcx, inner_y / 2 + wall / 2)),
+                ("right", (inner_x, wall), (pcx, -inner_y / 2 - wall / 2))):
+            solid_pillars.append((f"jump_pool_{name}", size, "jump_tiles", (u, v), POOL_HEIGHT))
+        visual.append(("jump_pool_bottom", (inner_x, inner_y, 0.05), "jump_pool_floor",
+                       site.world(pcx, 0, 0.04), site.rot()))
+        water = (site.world(pcx, 0, POOL_WATER / 2), (inner_x, inner_y, POOL_WATER), site.heading)
 
     # Grandstands along both sides of the outrun, before the pool: stepped rows,
     # alternating seat colours, a roof on posts.
@@ -730,12 +767,12 @@ def jump(bng: BeamNGpy, site: Site, n: int, model: str, config: str, name: str,
     up = float(_vehicle_lua(car, "return tostring(obj:getDirectionVectorUp().z)") or 0)
     damage = float(_vehicle_lua(car, "return tostring(beamstate.damage or 0)") or 0)
     positions, _ = car_positions(bng)
-    u, v, _ = site.local(*positions[vid]) if vid in positions else (0.0, 0.0, 0.0)
-    finish = pool_result(landing, u, v)
-    if finish == "pool":
-        bng.ui.display_message(f"SPLASH! {name} made it into the pool")
+    u, v, z = site.local(*positions[vid]) if vid in positions else (0.0, 0.0, 0.0)
+    finish = ocean_result(site, landing, u, v, z) if site.finish == "ocean" else pool_result(landing, u, v)
+    if finish in WINS:
+        bng.ui.display_message(f"SPLASH! {name} made it into the {finish}")
     park(car)
-    time.sleep(2.0 if finish == "pool" else 1.0)
+    time.sleep(2.0 if finish in WINS else 1.0)
     bng.vehicles.despawn(car)
     result = {"name": name, "distance": distance, "upright": up > 0.5,
               "damage": damage, "top_speed": top_speed, "finish": finish}
@@ -745,7 +782,9 @@ def jump(bng: BeamNGpy, site: Site, n: int, model: str, config: str, name: str,
 
 
 FINISH_LABELS = {"pool": "IN THE POOL", "overshot": "overshot the pool",
-                 "short": "short of the pool", "off the side": "off the side"}
+                 "short": "short of the pool", "off the side": "off the side",
+                 "ocean": "IN THE OCEAN", "rocks": "on the rocks", "stopped": "stopped on track"}
+WINS = ("pool", "ocean")
 
 
 def scoreboard(results: list[dict]) -> str:
@@ -767,8 +806,9 @@ def parse_args() -> argparse.Namespace:
                    help="Accepted to match beamng-race; this always connects to a running game")
     p.add_argument("--jumps", type=int, default=10, help="How many random cars jump")
     p.add_argument("--seed", type=int, default=None, help="Random seed for the car picks")
-    p.add_argument("--map", choices=sorted(SITES), default="italy",
-                   help="Where the course stands (default: a hillside in Italy above the sea)")
+    p.add_argument("--type", "--map", dest="site", choices=sorted(load_sites()), default="italy",
+                   help="Setting: where the course stands (default: a hillside in Italy above "
+                        "the sea). Add more with beamng-bigjump-scout <map>")
     return p.parse_args()
 
 
@@ -776,7 +816,7 @@ def main() -> None:
     args = parse_args()
     random.seed(args.seed)
     inrun, landing = build_course()
-    site = SITES[args.map]
+    site = load_sites()[args.site]
 
     bng = BeamNGpy(args.host, args.port)
     bng.open(launch=False)
@@ -808,12 +848,12 @@ def main() -> None:
                 print(f"  jump {n} ({name}) failed: {exc}")
         board = scoreboard(results)
         print("\nScoreboard\n" + board)
-        in_pool = sum(r["finish"] == "pool" for r in results)
-        print(f"{in_pool} of {len(results)} made it into the pool")
+        in_pool = sum(r["finish"] in WINS for r in results)
+        print(f"{in_pool} of {len(results)} made it into the {site.finish}")
         best = next((r for r in sorted(results, key=lambda r: -(r["distance"] or -1))), None)
         if best and best["distance"] is not None:
             bng.ui.display_message(f"Longest jump: {best['name']}, {best['distance']:.1f} m. "
-                                   f"{in_pool} of {len(results)} made it into the pool")
+                                   f"{in_pool} of {len(results)} made it into the {site.finish}")
         bng.control.queue_lua_command("raceCam.stop()")
     finally:
         bng.disconnect()

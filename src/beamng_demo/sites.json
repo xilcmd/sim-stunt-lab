@@ -1,0 +1,32 @@
+{
+  "jungle_rock_island": {
+    "level": "jungle_rock_island",
+    "x": -156.0,
+    "y": 228.0,
+    "heading": 180.0,
+    "base_z": 150.3,
+    "finish": "ocean",
+    "sea_z": 124.14
+  },
+  "west_coast_usa": {
+    "level": "west_coast_usa",
+    "x": 612.6,
+    "y": -667.5,
+    "heading": 210.0,
+    "base_z": 148.8
+  },
+  "small_island": {
+    "level": "small_island",
+    "x": -92.0,
+    "y": -220.0,
+    "heading": 330.0,
+    "base_z": 27.7
+  },
+  "italy_beach": {
+    "level": "italy",
+    "x": -988.0,
+    "y": 1188.0,
+    "heading": 30.0,
+    "base_z": 141.2
+  }
+}

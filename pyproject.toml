@@ -11,6 +11,7 @@ authors = [
 requires-python = ">=3.12"
 dependencies = [
     "beamngpy==1.35.1",
+    "numpy>=2.5.4",
 ]
 
 [project.scripts]
@@ -18,6 +19,7 @@ beamng-demo = "beamng_demo:main"
 beamng-race = "beamng_demo.race:main"
 beamng-soapbox = "beamng_demo.soapbox:main"
 beamng-bigjump = "beamng_demo.bigjump:main"
+beamng-bigjump-scout = "beamng_demo.scout:main"
 
 [build-system]
 requires = ["uv_build>=0.12.23,<0.13.0"]
