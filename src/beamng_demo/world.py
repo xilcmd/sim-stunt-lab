@@ -45,7 +45,10 @@ def spawn_rotation(heading: float, downhill: float = 0.0) -> tuple[float, float,
     the AI had to turn each one round at the start, and the chase camera sat in
     front of it. Checked by driving and with getDirectionVector.
     """
-    return angle_to_quat((0, -math.degrees(downhill), math.degrees(heading) - 90))
+    # The yaw is mirrored like box rotations: heading - 90 faced -heading (a
+    # car on the Italy course, heading 30 degrees, stood at -30). The two only
+    # agree at heading 0, where the oval and soapbox grids sit.
+    return angle_to_quat((0, -math.degrees(downhill), -math.degrees(heading) - 90))
 
 
 def png_bytes(width: int, height: int, pixel) -> bytes:

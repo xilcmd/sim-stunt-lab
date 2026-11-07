@@ -124,10 +124,11 @@ race. Flags: `--aggression` (default 0.8), `--shot-seconds`, `--seed`,
 
 `beamng-bigjump` sends random cars from the game's car list, one at a time, at
 full throttle down a ski-jump style ramp, inspired by DestructionNation's "Big
-Ramp Jumps with Random Cars" video. A 150 m start tower leads to a 30° in-run
-with hazard-striped edges and low walls, a level takeoff lip, and a long landing
-hill with distance lines and signs every 25 m. Each jump is measured along the
-landing hill from the knoll, like ski jumping, and a scoreboard follows the last
+Ramp Jumps with Random Cars" video. A 162 m start tower leads to a 30° in-run
+with hazard-striped edges and low walls and a level takeoff lip. An open 50 m
+gap separates the lip from a long landing hill, 16 m lower, with distance lines
+and signs every 25 m. Each jump is measured along the landing hill from the
+knoll (the gap is not counted), like ski jumping, and a scoreboard follows the last
 car. Grandstands line the outrun, a pool with water waits where wrecked cars
 usually run out of speed, and light towers and a judges' tower stand beside the
 hill.

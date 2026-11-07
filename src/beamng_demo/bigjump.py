@@ -76,7 +76,14 @@ SITES = {
 # end of the steep landing slope, and landed on the flat. A level lip keeps the
 # flight closer to the slope, and the higher start makes the landing hill
 # longer without changing the in-run drop.
-START_X, START_Z = -15.0, 150.0
+# The in-run sits LIP_GAP metres back from the landing hill: an open gap
+# between the lip and the knoll. The landing hill, stands and pool stay put.
+LIP_GAP = 50.0
+# The in-run is 12 m higher than the landing needs: moved back, its lower part
+# cut 10.4 m into the Italy hillside. KNOLL_DROP grows by the same 12 m, so the
+# landing hill, stands and pool keep their old heights.
+INRUN_RAISE = 12.0
+START_X, START_Z = -15.0 - LIP_GAP, 150.0 + INRUN_RAISE
 INRUN = [
     ("line", 27, 0),            # start platform (long enough for a truck)
     ("arc", 40, 0, -30),
@@ -84,7 +91,7 @@ INRUN = [
     ("arc", 100, -30, 0),       # transition into the lip
     ("line", 6, 0),             # takeoff lip, level
 ]
-KNOLL_DROP = 4.0                # landing hill starts this far below the lip
+KNOLL_DROP = 4.0 + INRUN_RAISE  # landing hill starts this far below the lip
 POOL_LENGTH, POOL_WALL, POOL_HEIGHT, POOL_WATER = 34.0, 0.8, 1.6, 1.3
 # Where the pool starts, in metres after the outrun turns flat. Wrecked test cars
 # came to rest 105-122 m along the flat; with the pool at 267 m none reached it.
@@ -107,7 +114,7 @@ WALL_HEIGHT = 1.0
 WALL_STEP = 6.0
 MARK_FIRST, MARK_EVERY, MARK_LAST = 50, 25, 300  # distance lines and signs, metres
 
-SPAWN_X = 0.0                   # on the start platform
+SPAWN_X = START_X + 15.0        # on the start platform
 FULL_THROTTLE_SPEED = 100.0     # m/s the AI is told to hold: more than any car reaches
 AI_FIRST_NODE = 12.0            # metres ahead of the car; at 6 m the car passed it at
                                 # once and the AI backed up and stopped
@@ -117,6 +124,8 @@ OVERVIEW_CAMERA = ((90.0, 260.0, 130.0), (0.05, -0.92, -0.38))  # side view of t
 # metres down the hill. A ground camera beside the outrun was dropped: with the
 # shorter outrun the stands and their roof hid the car.
 LIP_CAM_UP = 6.0                # lip camera height above the lip
+LIP_CAM_AHEAD = 62.0            # ...and how far past the lip it stands (at 12 m, over the gap,
+                                # the landing hill hid the landing)
 ORBIT_AGAIN_AT = 100.0          # metres down the landing hill: back to the orbit camera
 TREE_STEP = 8.0                 # metres between tree-clearing circles along the course
 TREE_CLEAR_INRUN = 15.0         # circle radius along the in-run (its rails included)
@@ -201,13 +210,13 @@ def build_course() -> tuple[Profile, Profile]:
     lip_x, lip_z = inrun.end()
     start_z = lip_z - KNOLL_DROP
     # Size the steep straight so the outrun ends up on the ground.
-    probe = Profile(lip_x, start_z, [s if s[1] is not None else ("line", 0, s[2]) for s in LANDING])
+    probe = Profile(lip_x + LIP_GAP, start_z, [s if s[1] is not None else ("line", 0, s[2]) for s in LANDING])
     drop_left = probe.end()[1] - (GROUND_Z + 0.02)
     steep = next(s[2] for s in LANDING if s[1] is None)
     length = drop_left / -math.sin(math.radians(steep))
     if length < 0:
         raise ValueError("START_Z is too low for this landing hill")
-    landing = Profile(lip_x, start_z, [s if s[1] is not None else ("line", length, s[2])
+    landing = Profile(lip_x + LIP_GAP, start_z, [s if s[1] is not None else ("line", length, s[2])
                                        for s in LANDING])
     return inrun, landing
 
@@ -662,7 +671,7 @@ def jump(bng: BeamNGpy, site: Site, n: int, model: str, config: str, name: str,
         f"ai.driveUsingPath{{script = {{{', '.join(nodes)}}}, avoidCars = 'off', aggression = 1, "
         f"routeSpeed = {FULL_THROTTLE_SPEED}, routeSpeedMode = 'set'}}")
 
-    lip_spot = site.world(lip_x + 12, 24.0, lip_z + LIP_CAM_UP)
+    lip_spot = site.world(lip_x + LIP_CAM_AHEAD, 24.0, lip_z + LIP_CAM_UP)
     orbit_again_x = landing.at_s(ORBIT_AGAIN_AT)[0]
     phase = "inrun"
     airborne = False
@@ -700,7 +709,7 @@ def jump(bng: BeamNGpy, site: Site, n: int, model: str, config: str, name: str,
             bng.control.queue_lua_command("raceCam.stop()")
             bng.camera.set_player_mode(car, "orbit", {})
 
-        if x > lip_x and distance is None:
+        if x >= landing.x[0] and distance is None:  # a car that drops into the gap gets no distance
             surface, along = landing.at_x(x)
             height = z - surface
             if height > AIRBORNE:
@@ -779,6 +788,10 @@ def main() -> None:
         # A pause left by any earlier script survives loading a scenario; a paused
         # car only gets placed by the AI and never moves.
         bng.control.resume()
+        # The marshal's truck was only needed to load the scenario; it showed up
+        # in the first shot of every run, parked across the start platform.
+        bng.control.queue_lua_command(
+            "local m = scenetree.findObject('marshal') if m then m:delete() end")
         # A side view of the whole course while it is built.
         pos, aim = OVERVIEW_CAMERA
         bng.camera.set_free(site.world(*pos), site.direction(*aim))
